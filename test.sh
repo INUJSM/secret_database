@@ -1,14 +1,24 @@
 #!/bin/bash
 
 # ========================================================
-# Secret Diary Project (Auto Sync Version)
+# Secret Diary Project (Folder Structure Version)
 # Repository: https://github.com/INUJSM/secret_database.git
 # ========================================================
 
 # [핵심] 스크립트가 있는 실제 폴더 위치를 변수로 저장
-# (어디서 실행하든 에러가 나지 않도록 작업 경로를 고정합니다)
 BASE_DIR=$(dirname "$(realpath "$0")")
 cd "$BASE_DIR" || exit
+
+# [변경] 일기 데이터를 저장할 하위 폴더 지정
+DATA_DIR="data"
+
+# 데이터 폴더가 없으면 생성
+if [ ! -d "$DATA_DIR" ]; then
+    mkdir -p "$DATA_DIR"
+fi
+
+# [자동 이사] 혹시 바깥(루트)에 있는 일기 파일이 있다면 data 폴더로 이동
+mv *.enc "$DATA_DIR" 2>/dev/null
 
 DIARY_EXT=".enc"        # 암호화된 일기 파일 확장자
 TEMP_FILE=".temp_edit"  # 수정 시 사용할 임시 파일 (숨김 처리)
@@ -23,11 +33,18 @@ function print_line() {
 
 function show_list() {
     echo " [ 저장된 일기 목록 ]"
-    ls *${DIARY_EXT} 2>/dev/null
-    if [ $? -ne 0 ]; then
+    
+    # [수정] data 폴더 안의 파일만 조회
+    # 파일이 하나도 없으면 ls가 에러를 뱉으므로 2>/dev/null 처리
+    count=$(ls "$DATA_DIR"/*${DIARY_EXT} 2>/dev/null | wc -l)
+    
+    if [ "$count" -eq 0 ]; then
         echo " (저장된 일기가 없습니다)"
         return 1
     fi
+
+    # 경로(data/)를 빼고 파일명만 예쁘게 출력
+    ls "$DATA_DIR"/*${DIARY_EXT} | xargs -n 1 basename
     return 0
 }
 
@@ -35,12 +52,11 @@ function show_list() {
 # 핵심 기능 함수
 # --------------------------------------------------------
 
-# 0. GitHub 레포지토리 및 토큰 설정 (개선됨)
+# 0. GitHub 레포지토리 및 토큰 설정
 function setup_github() {
     print_line
     echo " >> [0] GitHub 연결 설정 (레포지토리 & 토큰)"
     
-    # 1. 기존 설정 확인 로직 추가
     if [ ! -d ".git" ]; then
         echo " [알림] 현재 폴더가 Git 저장소가 아닙니다."
         echo "        자동으로 Git 저장소로 초기화합니다..."
@@ -69,7 +85,6 @@ function setup_github() {
         echo " [안내] 현재 연결된 원격 저장소가 없습니다. 설정을 시작합니다."
     fi
 
-    # 2. 신규 설정 입력 (기존 로직 유지)
     echo " [안내] GitHub 아이디와 토큰(Token)을 입력하면"
     echo "        매번 로그인할 필요 없이 자동 연동됩니다."
     
@@ -90,13 +105,11 @@ function setup_github() {
         return
     fi
 
-    # URL 재조립 (https://아이디:토큰@주소)
     clean_url=$(echo "$git_url" | sed 's/https:\/\///')
     auth_url="https://${git_id}:${git_token}@${clean_url}"
 
     echo " 설정을 변경 중입니다..."
     
-    # 리모트 설정 적용
     git remote get-url origin &> /dev/null
     if [ $? -eq 0 ]; then
         git remote set-url origin "$auth_url"
@@ -119,7 +132,9 @@ function write_diary() {
     
     echo -n " 날짜를 입력하세요 (예: 2024-11-26): "
     read input_date
-    filename="${input_date}${DIARY_EXT}"
+    
+    # [수정] 파일 경로에 DATA_DIR 추가
+    filename="$DATA_DIR/${input_date}${DIARY_EXT}"
 
     if [ -f "$filename" ]; then
         echo " [!] 이미 해당 날짜의 일기가 존재합니다. '수정' 기능을 이용해주세요."
@@ -154,7 +169,8 @@ function read_diary() {
     echo ""
     echo -n " 조회할 날짜를 입력하세요: "
     read target_date
-    filename="${target_date}${DIARY_EXT}"
+    # [수정] 경로 추가
+    filename="$DATA_DIR/${target_date}${DIARY_EXT}"
 
     if [ ! -f "$filename" ]; then
         echo " [!] 파일을 찾을 수 없습니다."
@@ -185,7 +201,8 @@ function edit_diary() {
     echo ""
     echo -n " 수정할 날짜를 입력하세요: "
     read target_date
-    filename="${target_date}${DIARY_EXT}"
+    # [수정] 경로 추가
+    filename="$DATA_DIR/${target_date}${DIARY_EXT}"
 
     if [ ! -f "$filename" ]; then
         echo " [!] 파일을 찾을 수 없습니다."
@@ -227,7 +244,8 @@ function delete_diary() {
     echo ""
     echo -n " 삭제할 날짜를 입력하세요: "
     read target_date
-    filename="${target_date}${DIARY_EXT}"
+    # [수정] 경로 추가
+    filename="$DATA_DIR/${target_date}${DIARY_EXT}"
 
     if [ ! -f "$filename" ]; then
         echo " [!] 파일을 찾을 수 없습니다."
@@ -255,41 +273,35 @@ function delete_diary() {
     fi
 }
 
-# 5. 일기 백업 기능 (삭제된 파일까지 완벽 동기화)
+# 5. 일기 백업 기능
 function backup_diary() {
     print_line
     echo " >> [5] 일기 백업 모드 (GitHub으로 보내기)"
     
-    # 0. 연결 확인
     git remote get-url origin &> /dev/null
     if [ $? -ne 0 ]; then
         echo " [오류] GitHub 설정이 필요합니다. 0번 메뉴를 이용하세요."
         return
     fi
 
-    # 1. [핵심 변경] 모든 변경사항(추가, 수정, 삭제)을 한 방에 담기
-    # -A 옵션은 "All"을 의미하며, 삭제된 파일까지 확실하게 감지합니다.
+    # [중요] 모든 변경사항(data 폴더 이동 포함) 반영
     git add -A
 
-    # 2. 커밋 상태 확인 (변경사항이 없으면 커밋 안 함)
-    # "nothing to commit" 에러 방지용
     if git diff-index --quiet HEAD --; then
         echo " [알림] 변경된 내용이 없어 백업을 건너뜁니다."
         return
     fi
 
-    # 3. 커밋
     commit_msg="Update Diary: $(date '+%Y-%m-%d %H:%M:%S')"
     git commit -m "$commit_msg" 2>/dev/null
 
     echo " GitHub으로 동기화 중..."
     current_branch=$(git branch --show-current)
     
-    # 4. 푸시
     git push origin "$current_branch"
 
     if [ $? -eq 0 ]; then
-        echo " [성공] 삭제된 파일까지 GitHub에 완벽하게 반영되었습니다."
+        echo " [성공] 백업 완료 (파일 위치 변경도 반영됨)"
     else
         echo " -------------------------------------------------------"
         echo " [실패] 서버와 충돌이 발생했습니다."
@@ -298,57 +310,87 @@ function backup_diary() {
     fi
 }
 
-# 6. 일기 동기화 기능 (Pull)
+# 6. 일기 동기화 기능
 function sync_diary() {
     print_line
-    echo " >> [6] 일기 동기화 모드 (서버에서 가져오기)"
+    echo " >> [6] 일기 동기화 모드 (서버와 합치기)"
     
-    # 0. 최신 정보 조회
-    echo " 서버 정보를 확인하고 있습니다..."
     git fetch origin &> /dev/null
+    if [ $? -ne 0 ]; then
+        echo " [오류] 인터넷 연결이나 GitHub 설정을 확인해주세요."
+        return
+    fi
 
     current_branch=$(git branch --show-current)
-    
+
     echo " -------------------------------------------------------"
-    echo " 가져오기 방식을 선택하세요:"
-    echo " -------------------------------------------------------"
-    echo " 1. 합치기 (Keep Local)"
-    echo "    - 내 컴퓨터의 파일들을 '유지'하면서 최신 파일을 가져옵니다."
-    echo "    - 내가 쓴 일기는 지워지지 않습니다."
+    echo " [1] 안전하게 합치기 (Smart Merge)"
+    echo "    - 서버의 내용을 가져오되, 내용이 다르면 선택합니다."
     echo ""
-    echo " 2. 덮어쓰기 (Delete Local & Overwrite)"
-    echo "    - 내 컴퓨터의 작업 내용을 '삭제'하고 서버 상태로 만듭니다."
-    echo "    - 서버랑 100% 똑같이 맞추고 싶을 때 사용하세요."
+    echo " [2] 강제 덮어쓰기 (Reset)"
+    echo "    - 내 컴퓨터의 모든 작업을 버리고 서버랑 똑같이 만듭니다."
     echo " -------------------------------------------------------"
     echo -n " 선택 (1/2): "
     read sync_mode
 
     if [ "$sync_mode" == "1" ]; then
-        echo " [진행] 기존 파일을 유지하며 합칩니다 (Git Pull)..."
-        git pull origin "$current_branch"
+        echo " [진행] 서버의 변경 사항을 가져오는 중..."
         
-        if [ $? -eq 0 ]; then
-            echo " [성공] 최신 파일들을 가져와서 합쳤습니다."
+        pull_output=$(git pull origin "$current_branch" 2>&1)
+        pull_status=$?
+
+        if [ $pull_status -eq 0 ]; then
+            echo " [성공] 충돌 없이 자동으로 합쳐졌습니다."
+            
+            deleted_files=$(git ls-files --deleted)
+            if [ -n "$deleted_files" ]; then
+                echo " [알림] 삭제된 파일이 서버에서 복구되었습니다."
+                git checkout .
+            fi
         else
-            echo " [오류] 내용이 서로 꼬여서 합치지 못했습니다."
-            echo "        2번(덮어쓰기)을 하거나, 충돌 파일을 수정해야 합니다."
+            if [[ "$pull_output" == *"CONFLICT"* ]] || [[ "$pull_output" == *"overwritten"* ]]; then
+                echo " -------------------------------------------------------"
+                echo " [!] 내용 불일치 감지! (서버 파일 vs 내 파일)"
+                echo " -------------------------------------------------------"
+                echo " 1. 내 파일 유지 (Keep My Local)"
+                echo " 2. 서버 파일 적용 (Accept Theirs)"
+                echo " -------------------------------------------------------"
+                echo -n " 해결 방법 선택 (1/2): "
+                read conflict_choice
+
+                if [ "$conflict_choice" == "1" ]; then
+                    echo " [진행] 내 파일 내용을 유지합니다..."
+                    git stash &> /dev/null
+                    git pull origin "$current_branch" &> /dev/null
+                    git stash pop &> /dev/null
+                    git checkout --ours . 2>/dev/null
+                    git add -A
+                    git commit -m "Merge conflict: Kept local version" 2>/dev/null
+                    echo " [완료] 내 내용으로 유지되었습니다."
+                    
+                elif [ "$conflict_choice" == "2" ]; then
+                    echo " [진행] 서버 파일 내용을 적용합니다..."
+                    git reset --hard "origin/$current_branch"
+                    echo " [완료] 서버 내용으로 변경되었습니다."
+                else
+                    echo " [취소] 동기화를 중단합니다."
+                fi
+            else
+                echo " [오류] 알 수 없는 이유로 동기화에 실패했습니다."
+                echo " 메시지: $pull_output"
+            fi
         fi
 
     elif [ "$sync_mode" == "2" ]; then
-        echo " [경고] 현재 컴퓨터의 작업 내용이 삭제되고 서버 내용으로 대체됩니다."
+        echo " [경고] 내 컴퓨터의 모든 파일이 삭제되고 서버 내용으로 바뀝니다."
         echo -n " 정말 진행하시겠습니까? (y/n): "
         read confirm
         
         if [ "$confirm" == "y" ]; then
-            echo " [진행] 서버 데이터로 강제 동기화 중..."
-            
-            # [핵심] 로컬 상태를 원격 브랜치 상태로 강제 초기화 (Hard Reset)
+            echo " [진행] 서버 데이터로 강제 초기화 중..."
             git reset --hard "origin/$current_branch"
-            
-            if [ $? -eq 0 ]; then
-                echo " [성공] 내 컴퓨터를 서버와 똑같이 맞췄습니다."
-                ls *${DIARY_EXT}
-            fi
+            git clean -fd
+            echo " [성공] 서버와 100% 동일한 상태가 되었습니다."
         else
             echo " [취소] 작업을 취소합니다."
         fi
@@ -357,36 +399,50 @@ function sync_diary() {
     fi
 }
 
-# 7. 프로그램 설치 (경로 자동 등록)
+# 7. 프로그램 설치
 function install_program() {
     print_line
-    echo " >> [7] 설치 모드 (명령어 'mydiary' 등록)"
+    echo " >> [7] 설치 모드 (명령어 자동 등록)"
     
-    # 이미 상단에서 계산한 BASE_DIR 사용
+    CURRENT_DIR=$(pwd)
     SCRIPT_NAME=$(basename "$0")
-    FULL_PATH="$BASE_DIR/$SCRIPT_NAME"
+    FULL_PATH="$CURRENT_DIR/$SCRIPT_NAME"
     
-    if [ -f "$HOME/.zshrc" ]; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
         CONFIG_FILE="$HOME/.zshrc"
+        OS_TYPE="MacBook (macOS)"
     else
         CONFIG_FILE="$HOME/.bashrc"
+        OS_TYPE="Windows/Linux"
     fi
 
-    echo " 등록할 경로: $FULL_PATH"
+    echo " 감지된 시스템: $OS_TYPE"
+    echo " 설정 파일 위치: $CONFIG_FILE"
     
-    grep -q "alias mydiary=" "$CONFIG_FILE"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        touch "$CONFIG_FILE"
+    fi
+
+    ALIAS_NAME="test.sh"
+
+    grep -q "alias $ALIAS_NAME=" "$CONFIG_FILE"
     if [ $? -eq 0 ]; then
-        echo " [!] 이미 'mydiary' 명령어가 등록되어 있습니다."
+        echo " ------------------------------------------------------"
+        echo " [!] 이미 '$ALIAS_NAME' 명령어가 등록되어 있습니다."
+        echo " ------------------------------------------------------"
         return
     fi
 
     chmod +x "$FULL_PATH"
     echo "" >> "$CONFIG_FILE"
-    echo "# Secret Diary Alias" >> "$CONFIG_FILE"
-    echo "alias mydiary='$FULL_PATH'" >> "$CONFIG_FILE"
+    echo "# Secret Diary Project Alias" >> "$CONFIG_FILE"
+    echo "alias $ALIAS_NAME='$FULL_PATH'" >> "$CONFIG_FILE"
     
+    echo " ------------------------------------------------------"
     echo " [성공] 설치가 완료되었습니다!"
-    echo " 터미널을 다시 켜거나 'source $CONFIG_FILE'을 입력하세요."
+    echo " ------------------------------------------------------"
+    echo " [중요] 적용하려면 다음 명령어를 한 번 입력하세요:"
+    echo "        source $CONFIG_FILE"
 }
 
 # --------------------------------------------------------

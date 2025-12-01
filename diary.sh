@@ -43,12 +43,14 @@ while true; do
     read choice
 
     case "$choice" in
+        0) setup_github ;;
         1) write_diary ;;
         2) read_diary ;;
         3) edit_diary ;;
         4) delete_diary ;;
         5) backup_diary ;;
         6) sync_diary ;;
+        7) install_program ;;
         q) echo " 프로그램을 종료합니다."; exit 0 ;;
         *) echo " 잘못된 입력입니다." ;;
     esac

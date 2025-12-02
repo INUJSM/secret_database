@@ -19,7 +19,7 @@ function sync_diary() {
     
     current_branch=$(git branch --show-current)
     if [ -z "$current_branch" ]; then current_branch="main"; fi
-
+    git checkout .
     git pull origin "$current_branch" 2>/dev/null
 
     if [ $? -eq 0 ]; then
